@@ -3,17 +3,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import input_data
 
-SUMMARY_DIR = '/tensorflow/compression21'
+SUMMARY_DIR = '/tensorflow/compression28'
 
 width = 64
 height = 64
 channels = 3
 
 input_size = width * height * channels
-hidden_layer = int(input_size / 24)
+hidden_layer = int(input_size / 96)
 
-kernel_size = 8
-filters = 16
+kernel_size = 4
+filters = 8
 stride = 2
 
 def show_images(left, right, title):
@@ -43,7 +43,7 @@ def encoder(x):
 
     with tf.name_scope('encoder'):
         # Single layer convolution
-        conv_1 = tf.layers.conv2d(x, filters, [kernel_size, kernel_size], [stride, stride], activation=tf.nn.sigmoid, name='conv_1')
+        conv_1 = tf.layers.conv2d(x, filters, [kernel_size, kernel_size], [stride, stride], activation=tf.nn.sigmoid, name='conv_1', kernel_initializer=tf.truncated_normal_initializer)
         flat = tf.reshape(conv_1, [-1, filters * conv_w * conv_h], name='flatten')
         layer_1 = tf.layers.dense(flat, hidden_layer, activation=tf.nn.sigmoid, name='fc_layer')
 
@@ -61,7 +61,7 @@ def decoder(x):
         # Single layer convolution
         layer_1 = tf.layers.dense(x, filters * int(conv_w) * int(conv_h), activation=tf.nn.sigmoid, name='conv_trans_input')
         conv_input = tf.reshape(layer_1, [-1, int(conv_w), int(conv_h), filters], name='reshape')
-        conv_1 = tf.layers.conv2d_transpose(conv_input, 3, [kernel_size, kernel_size], [stride, stride], activation=tf.nn.sigmoid, name='conv_trans')
+        conv_1 = tf.layers.conv2d_transpose(conv_input, 3, [kernel_size, kernel_size], [stride, stride], activation=tf.nn.sigmoid, name='conv_trans', kernel_initializer=tf.truncated_normal_initializer)
 
         # Single dense layer
         #layer_1 = tf.layers.dense(x, input_size, activation=tf.nn.sigmoid, name='fc_layer_2')
@@ -158,6 +158,10 @@ def ssim(orig_b, pred_b):
     # SSIM actually gives a value from -1.0f to 1.0f, but make 0 to 2.0f is easier to understand.
     return 1 - ans
 
+def log10(x):
+    numerator = tf.log(x)
+    denominator = tf.log(tf.constant(10, dtype=numerator.dtype))
+    return numerator / denominator
 
 # Setup placeholders
 X = tf.placeholder(tf.float32, shape=[None, width, height, channels], name='X')
@@ -176,6 +180,8 @@ with tf.name_scope('accuracy'):
     with tf.name_scope('mse'):
         # Calculate the MSE of the predicted and original image.
         mse = tf.reduce_mean(tf.pow(y_true - y_pred, 2))
+    with tf.name_scope('psnr'):
+        psnr = 10 * log10(1 / mse)
     with tf.name_scope('accuracy'):
         # The loss function used in training the network.
         loss = mse
@@ -183,7 +189,9 @@ with tf.name_scope('accuracy'):
     # Add these values to log.
     tf.summary.scalar('ssim', ssim_loss)
     tf.summary.scalar('mse', mse)
+    tf.summary.scalar('psnr', psnr)
     tf.summary.scalar('loss', loss)
+
 
 with tf.name_scope('train'):
     train_step = tf.train.AdamOptimizer().minimize(loss)
@@ -191,7 +199,7 @@ with tf.name_scope('train'):
 merged = tf.summary.merge_all()
 
 with tf.Session() as sess:
-    train_batch_size = 128
+    train_batch_size = 16
     test_batch_size = 256
     max_steps = 1000000
 
@@ -210,13 +218,19 @@ with tf.Session() as sess:
 
     # Get the intial values for the kernel from
 
-    for i in range(0, max_steps + 1):
-        train_b = sess.run(next_element_train)
+    batches = []
 
-        summary, _ = sess.run([merged, train_step], feed_dict={X: train_b})
+    for i in range(0, 150):
+        print(i)
+        batches.append(sess.run(next_element_train))
+
+    for i in range(0, max_steps + 1):
+        # train_b = sess.run(next_element_train)
+
+        summary, _ = sess.run([merged, train_step], feed_dict={X: batches[i % 150]})
         train_writer.add_summary(summary, i)
 
-        if i % 50 == 0:
+        if i % 500 == 0:
             test_b = sess.run(next_element_valid)
 
             orig = test_b
