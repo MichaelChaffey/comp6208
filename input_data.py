@@ -5,9 +5,6 @@ TRAIN_PATH = 'var/data/train_64x64/'
 VALID_PATH = 'var/data/valid_64x64/'
 FILE_SUFFIX = '.png'
 
-MAX_TRAIN_SIZE = 10000
-MAX_VALID_SIZE = 1000
-
 NUM_CORES = 8
 
 
@@ -18,25 +15,25 @@ def decode_image(image_path):
     return image_converted
 
 
-def get_filenames(train=True):
+def get_filenames(data_size, train=True):
     filenames = []
 
     if train:
         for image_path in glob.glob(TRAIN_PATH + '*' + FILE_SUFFIX):
             filenames.append(tf.constant(image_path))
-            if len(filenames) >= MAX_TRAIN_SIZE:
+            if len(filenames) >= data_size:
                 return filenames
     else:
         for image_path in glob.glob(VALID_PATH + '*' + FILE_SUFFIX):
             filenames.append(tf.constant(image_path))
-            if len(filenames) > MAX_VALID_SIZE:
+            if len(filenames) > data_size:
                 return filenames
 
     return
 
 
-def get_data(batch_size, train=True):
-    dataset = tf.data.Dataset.from_tensor_slices(get_filenames(train))
+def get_data(batch_size, data_size, train=True):
+    dataset = tf.data.Dataset.from_tensor_slices(get_filenames(data_size, train))
     # It goes faster if we don't shuffle the dataset.
     dataset = dataset.shuffle(batch_size * 10)
     dataset = tf.data.Dataset.map(dataset, lambda path: decode_image(path), NUM_CORES)

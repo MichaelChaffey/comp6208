@@ -3,18 +3,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import input_data
 
-SUMMARY_DIR = '/tensorflow/compression28'
+SUMMARY_DIR = '/tensorflow/compression54'
 
 width = 64
 height = 64
 channels = 3
 
 input_size = width * height * channels
-hidden_layer = int(input_size / 96)
+hidden_layer = int(input_size / 48)
 
-kernel_size = 4
-filters = 8
-stride = 2
+kernel_size = 7
+filters = 16
+stride = 3
 
 def show_images(left, right, title):
     """ Displays two side images side by side.
@@ -184,7 +184,7 @@ with tf.name_scope('accuracy'):
         psnr = 10 * log10(1 / mse)
     with tf.name_scope('accuracy'):
         # The loss function used in training the network.
-        loss = mse
+        loss = ssim_loss * mse
 
     # Add these values to log.
     tf.summary.scalar('ssim', ssim_loss)
@@ -194,40 +194,66 @@ with tf.name_scope('accuracy'):
 
 
 with tf.name_scope('train'):
-    train_step = tf.train.AdamOptimizer().minimize(loss)
+    train_step_mse = tf.train.AdamOptimizer().minimize(mse)
+    train_step_psnr = tf.train.AdamOptimizer().minimize(-psnr)
+    train_step_ssim = tf.train.AdamOptimizer().minimize(ssim_loss)
+    train_step_loss = tf.train.AdamOptimizer().minimize(loss)
 
 merged = tf.summary.merge_all()
 
 with tf.Session() as sess:
-    train_batch_size = 16
-    test_batch_size = 256
+    train_batch_size = 1
+    test_batch_size = 64
     max_steps = 1000000
+
+    MAX_A_TRAIN_SIZE = 50
+    MAX_B_TRAIN_SIZE = 500
+    MAX_C_TRAIN_SIZE = 15000
+
+    MAX_VALID_SIZE = 1000
+
+    INITIAL_TRAIN_STEPS = 20000
 
     train_writer = tf.summary.FileWriter(SUMMARY_DIR + '/train', sess.graph)
     test_writer = tf.summary.FileWriter(SUMMARY_DIR + '/test', sess.graph)
 
     sess.run(tf.global_variables_initializer())
 
-    data_train = input_data.get_data(train_batch_size, True)
-    iterator_train = data_train.make_one_shot_iterator()
-    next_element_train = iterator_train.get_next()
+    data_train_a = input_data.get_data(8, MAX_A_TRAIN_SIZE, True)
+    iterator_train_a = data_train_a.make_one_shot_iterator()
+    next_element_train_a = iterator_train_a.get_next()
 
-    data_valid = input_data.get_data(test_batch_size, False)
+    data_train_b = input_data.get_data(8, MAX_B_TRAIN_SIZE, True)
+    iterator_train_b = data_train_b.make_one_shot_iterator()
+    next_element_train_b = iterator_train_b.get_next()
+
+    data_train_c = input_data.get_data(32, MAX_C_TRAIN_SIZE, True)
+    iterator_train_c = data_train_c.make_one_shot_iterator()
+    next_element_train_c = iterator_train_c.get_next()
+
+    data_valid = input_data.get_data(test_batch_size, MAX_VALID_SIZE, False)
     iterator_valid = data_valid.make_one_shot_iterator()
     next_element_valid = iterator_valid.get_next()
 
     # Get the intial values for the kernel from
 
-    batches = []
+    #batches = []
 
-    for i in range(0, 150):
-        print(i)
-        batches.append(sess.run(next_element_train))
+    #for i in range(0, 150):
+    #    print(i)
+    #    batches.append(sess.run(next_element_train))
 
     for i in range(0, max_steps + 1):
-        # train_b = sess.run(next_element_train)
+        if i <= INITIAL_TRAIN_STEPS:
+            train_batch = sess.run(next_element_train_a)
+            summary, _ = sess.run([merged, train_step_mse], feed_dict={X: train_batch})
+        elif i <= 50000:
+            train_batch = sess.run(next_element_train_b)
+            summary, _ = sess.run([merged, train_step_mse], feed_dict={X: train_batch})
+        else:
+            train_batch = sess.run(next_element_train_c)
+            summary, _ = sess.run([merged, train_step_mse], feed_dict={X: train_batch})
 
-        summary, _ = sess.run([merged, train_step], feed_dict={X: batches[i % 150]})
         train_writer.add_summary(summary, i)
 
         if i % 500 == 0:
@@ -239,7 +265,7 @@ with tf.Session() as sess:
 
             print('Step ' + str(i) + ', current loss: ' + str(current_loss))
 
-            if i % 1000 == 0:
+            if i % 2500 == 0:
                 show_images(orig[0], pred[0], 'Step ' + str(i))
 
 
