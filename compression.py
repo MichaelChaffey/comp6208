@@ -4,10 +4,10 @@ import numpy as np
 import input_data
 import time
 
-SUMMARY_DIR = '/tensorflow/compressionlong2'
+SUMMARY_DIR = '/tensorflow/cifar/compression19'
 
-IMAGE_WIDTH = 64
-IMAGE_HEIGHT = 64
+IMAGE_WIDTH = 32
+IMAGE_HEIGHT = 32
 IMAGE_CHANNELS = 3
 
 INPUT_SIZE = IMAGE_WIDTH * IMAGE_HEIGHT * IMAGE_CHANNELS
@@ -34,6 +34,35 @@ def show_images(left, right, title):
     plt.show()
     return
 
+def show_validation_images(orig, pred, title, n = 6, show_orig=True):
+
+    plt.figure(figsize=(6, 2))
+    if show_orig:
+        f, axs = plt.subplots(2, 6)
+    else:
+        f, axs = plt.subplots(1, 6)
+
+    for i in range(n):
+        if show_orig:
+            ax_orig = axs[1, i]
+            ax_orig.imshow(orig[i])
+            ax_orig.get_xaxis().set_visible(False)
+            ax_orig.get_yaxis().set_visible(False)
+
+            ax_pred = axs[0, i]
+            ax_pred.imshow(pred[i])
+            ax_pred.get_xaxis().set_visible(False)
+            ax_pred.get_yaxis().set_visible(False)
+        else:
+            ax_pred = axs[i]
+            ax_pred.imshow(pred[i])
+            ax_pred.get_xaxis().set_visible(False)
+            ax_pred.get_yaxis().set_visible(False)
+
+    plt.subplots_adjust(wspace=0, hspace=0)
+    plt.suptitle(title)
+    plt.show()
+    return
 
 def encoder(x, kernel_size, num_filters, stride, output_size):
     conv_w = int((IMAGE_WIDTH - kernel_size) / stride) + 1
@@ -58,7 +87,7 @@ def decoder(x, kernel_size, num_filters, stride):
     with tf.name_scope('decoder'):
         # Single layer convolution
         layer_1 = tf.layers.dense(x, num_filters * int(conv_w) * int(conv_h), activation=tf.nn.sigmoid, name='conv_trans_input')
-        conv_input = tf.reshape(layer_1, [-1, int(conv_w), int(conv_h), num_filters], name='reshape')
+        conv_input = tf.reshape(layer_1, [-1, int(conv_h), int(conv_w), num_filters], name='reshape')
         conv_1 = tf.layers.conv2d_transpose(conv_input, 3, [kernel_size, kernel_size], [stride, stride], activation=tf.nn.sigmoid, name='conv_trans', kernel_initializer=tf.truncated_normal_initializer)
 
         # Single dense layer
@@ -129,19 +158,19 @@ def log10(x):
     return numerator / denominator
 
 
-def compression_model(num_filters, loss_fc, max_a_steps, max_b_steps):
-    hparam_str = '/f=' + str(num_filters) + ',loss=' + loss_fc + ',a-steps=' + str(max_a_steps) + ',b-steps=' + str(max_b_steps)
+def compression_model(num_filters, loss_fc, lr, cr):
+    hparam_str = '/f=' + str(num_filters) + ',loss=' + loss_fc + ',lr=' + str(lr) + ',cr=' + str(cr)
     print('RUN: ' + hparam_str)
 
     tf.reset_default_graph()
 
-    output_size = int(INPUT_SIZE / 48)
+    output_size = int(INPUT_SIZE / cr)
 
-    kernel_size = 7
-    stride = 3
+    kernel_size = 8
+    stride = 1
 
     # Setup placeholders
-    X = tf.placeholder(tf.float32, shape=[None, IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_CHANNELS], name='X')
+    X = tf.placeholder(tf.float32, shape=[None, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNELS], name='X')
 
     # Setup encoder and decoder layers
     encoder_op = encoder(X, kernel_size, num_filters, stride, output_size)
@@ -167,65 +196,51 @@ def compression_model(num_filters, loss_fc, max_a_steps, max_b_steps):
 
     with tf.name_scope('train'):
         if loss_fc == 'mse':
-            train_step = tf.train.AdamOptimizer().minimize(mse)
+            train_step = tf.train.AdamOptimizer(learning_rate=lr).minimize(mse)
         elif loss_fc == 'psnr':
-            train_step = tf.train.AdamOptimizer().minimize(-psnr)
+            train_step = tf.train.AdamOptimizer(learning_rate=lr).minimize(-psnr)
         else:
-            train_step = tf.train.AdamOptimizer().minimize(ssim_loss)
+            train_step = tf.train.AdamOptimizer(learning_rate=lr).minimize(ssim_loss)
 
     merged = tf.summary.merge_all()
+
+    size = np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()])
+    print(size)
 
     with tf.Session() as sess:
         train_writer = tf.summary.FileWriter(SUMMARY_DIR + hparam_str + '/train', sess.graph)
         test_writer = tf.summary.FileWriter(SUMMARY_DIR + hparam_str + '/test', sess.graph)
 
-        test_batch_size = 64
-
-        MAX_A_TRAIN_SIZE = 500
-        MAX_B_TRAIN_SIZE = 50000
-        MAX_C_TRAIN_SIZE = 250000
-
-        MAX_VALID_SIZE = 1000
-
         sess.run(tf.global_variables_initializer())
 
-        data_train_a = input_data.get_data(8, MAX_A_TRAIN_SIZE, True)
+        data_train_a = input_data.get_cifar_train(16)
         iterator_train_a = data_train_a.make_one_shot_iterator()
         next_element_train_a = iterator_train_a.get_next()
 
-        data_train_b = input_data.get_data(16, MAX_B_TRAIN_SIZE, True)
-        iterator_train_b = data_train_b.make_one_shot_iterator()
-        next_element_train_b = iterator_train_b.get_next()
+        data_test = input_data.get_cifar_test(64)
+        iterator_test = data_test.make_one_shot_iterator()
+        next_element_test = iterator_test.get_next()
 
-        data_train_c = input_data.get_data(32, MAX_C_TRAIN_SIZE, True)
-        iterator_train_c = data_train_c.make_one_shot_iterator()
-        next_element_train_c = iterator_train_c.get_next()
-
-        data_valid = input_data.get_data(test_batch_size, MAX_VALID_SIZE, False)
+        data_valid = input_data.get_cifar_validation(6)
         iterator_valid = data_valid.make_one_shot_iterator()
         next_element_valid = iterator_valid.get_next()
 
+        validation_images = sess.run(next_element_valid);
+
         # Amount of time to train model in seconds
-        timeout = time.time() + 60*90
+        timeout = time.time() + 60*60
 
         step = 0
 
         while True:
-            if step <= max_a_steps:
-                train_batch = sess.run(next_element_train_a)
-                summary, _ = sess.run([merged, train_step], feed_dict={X: train_batch})
-            elif step <= max_b_steps:
-                train_batch = sess.run(next_element_train_b)
-                summary, _ = sess.run([merged, train_step], feed_dict={X: train_batch})
-            else:
-                train_batch = sess.run(next_element_train_c)
-                summary, _ = sess.run([merged, train_step], feed_dict={X: train_batch})
+            train_batch = sess.run(next_element_train_a)
+            summary, _ = sess.run([merged, train_step], feed_dict={X: train_batch})
 
             if step % 25 == 0:
                 train_writer.add_summary(summary, step)
 
-            if step % 1000 == 0:
-                test_b = sess.run(next_element_valid)
+            if step % 100 == 0:
+                test_b = sess.run(next_element_test)
 
                 orig = test_b
                 summary, pred, current_loss = sess.run([merged, decoder_op, mse], feed_dict={X: test_b})
@@ -233,24 +248,25 @@ def compression_model(num_filters, loss_fc, max_a_steps, max_b_steps):
 
                 print('Step ' + str(step) + ', current loss: ' + str(current_loss))
 
-            if step % 25000 == 0:
-                show_images(orig[0], pred[0], hparam_str + ' - Step ' + str(step))
+            if step % 50000 == 0:
+                summary, pred = sess.run([merged, decoder_op], feed_dict={X: validation_images})
+                show_validation_images(validation_images[0:6], pred[0:6], 'Step ' + str(step))
 
             # Increment step
             step += 1
 
             if time.time() > timeout:
-                show_images(orig[0], pred[0], hparam_str + ' - Step ' + str(step))
+                summary, pred, m, p, s = sess.run([merged, decoder_op, mse, psnr, ssim_loss], feed_dict={X: validation_images})
+                show_validation_images(validation_images[0:6], pred[0:6], 'Step ' + str(step) + ' - ' + hparam_str + '\npsnr = ' + str(p) + 'dB, mse = ' + str(m) + ', ssim = ' + str(1 - s), show_orig=False)
                 break
+
 
 def main():
 
     # Try different loss functions
-    for filters in [16, 48]:
-        for loss_fc in ['ssim', 'psnr']:
-            # Try over fitting
-            compression_model(filters, loss_fc, 20000, 200000)
-            compression_model(filters, loss_fc, 0, 0)
+    for cr in [16, 32, 96]:
+            for loss_fc in ['psnr', 'ssim', 'mse']:
+                compression_model(32, loss_fc, 0.0001, cr)
 
 
 if __name__ == '__main__':
